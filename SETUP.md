@@ -75,7 +75,7 @@ sudo docker run hello-world
 
 `sudo docker run hello-world` が成功すれば、Docker 自体の導入は完了です。
 
-## 2. Docker で go2_ros2_sdk をビルドして起動する
+## 2. Docker で go2_ros2_sdk を運用する
 
 このリポジトリにはすでに Dockerfile があります。
 
@@ -83,32 +83,144 @@ sudo docker run hello-world
 - 定義ファイル: [docker/Dockerfile](docker/Dockerfile)
 - Compose 定義: [docker/docker-compose.yml](docker/docker-compose.yml)
 
-### 2.1 イメージをビルドする
+### 2.1 運用方針
 
-リポジトリのルートで実行します。
+`docker compose up --build` は便利ですが、毎回これを使うとイメージの再ビルド確認や必要に応じたコンテナ再作成が入ります。
 
-```bash
-cd ~/ros2_ws/src/go2_ros2_sdk
-docker build -f docker/Dockerfile -t go2_ros2_sdk:humble .
-```
+コンテナ内で自分が行った変更を残したまま停止と再起動をしたい場合は、以下のように手順を分ける運用の方が分かりやすいです。
 
-### 2.2 Compose で起動する
+- 初回だけ: イメージをビルドする
+- 初回だけ: コンテナを作成する
+- 普段の利用: `start` で起動する
+- 作業するとき: `exec` でコンテナに入る
+- 終わったら: `stop` で止める
 
-README では `docker-compose up --build` と書かれていますが、現在の Docker では `docker compose up --build` が標準です。
+注意:
+- `stop` / `start` では、同じコンテナを使い続けるため、コンテナ内の変更は通常そのまま残ります。
+- `down`、`rm`、`up --build --force-recreate` などでコンテナが再作成されると、コンテナ内だけに存在していた変更は失われます。
+- 永続的に残したいコード変更は、可能ならホスト側のリポジトリで管理してください。
+
+### 2.2 イメージをビルドする
+
+初回、または `Dockerfile` や依存関係を変更したときだけ実行します。
 
 ```bash
 cd ~/ros2_ws/src/go2_ros2_sdk/docker
-ROBOT_IP=<ROBOT_IP> CONN_TYPE=<webrtc_or_cyclonedds> docker compose up --build
+docker compose build
+```
+
+- `docker/Dockerfile` に従って Docker イメージを作成します。
+- ビルド中にソースコードのコピー、`pip install -r requirements.txt`、`rosdep install`、`colcon build` が実行されます。
+- この段階では、まだコンテナは作成も起動もされません。
+
+### 2.3 コンテナを作成する
+
+初回だけ実行します。ここで `ROBOT_IP` と `CONN_TYPE` をコンテナ設定として埋め込みます。
+
+```bash
+cd ~/ros2_ws/src/go2_ros2_sdk/docker
+ROBOT_IP=<ROBOT_IP> CONN_TYPE=<webrtc_or_cyclonedds> docker compose create
 ```
 
 例:
 
 ```bash
 cd ~/ros2_ws/src/go2_ros2_sdk/docker
-ROBOT_IP=192.168.12.113 CONN_TYPE=webrtc docker compose up --build
+ROBOT_IP=192.168.5.113 CONN_TYPE=webrtc docker compose create
 ```
 
-### 2.3 GUI を使う場合の補足
+- `docker-compose.yml` に基づいてコンテナを作成します。
+- `ROBOT_IP` と `CONN_TYPE` は、このコンテナの環境変数として保存されます。
+- コンテナはまだ停止状態で、`ros2 launch go2_robot_sdk robot.launch.py` もまだ実行されません。
+
+補足:
+- `ROBOT_IP` を変更したい場合は、既存コンテナを一度 `docker compose down` してから `create` をやり直してください。
+
+### 2.4 コンテナを起動する
+
+2回目以降の通常起動はこれで十分です。
+
+```bash
+cd ~/ros2_ws/src/go2_ros2_sdk/docker
+docker compose start
+```
+
+このリポジトリでは、コンテナ起動時に [docker/Dockerfile](docker/Dockerfile) の `CMD` により `ros2 launch go2_robot_sdk robot.launch.py` が自動で実行されます。
+
+何が起こるか:
+- すでに作成済みのコンテナを起動します。
+- コンテナのメインプロセスとして `ros2 launch go2_robot_sdk robot.launch.py` が実行されます。
+- その launch の中で `go2_driver_node`、`rviz2`、SLAM、Nav2 など複数の ROS 2 ノードが起動します。
+- 同じコンテナを再利用するため、通常はコンテナ内で行った変更も残ります。
+
+### 2.5 コンテナの中に入る
+
+起動中のコンテナにシェルで入って作業したい場合は次を実行します。
+
+```bash
+cd ~/ros2_ws/src/go2_ros2_sdk/docker
+docker compose exec unitree_ros bash
+```
+
+何が起こるか:
+- 起動中の `unitree_ros` コンテナの中で、追加の `bash` プロセスを開きます。
+- すでに動いている `ros2 launch ...` はそのまま継続します。
+- 別ターミナルから `ros2 topic pub`、`ros2 topic echo`、`ros2 node list` などを実行できるようになります。
+
+### 2.6 コンテナを停止する
+
+作業内容を残したまま一旦止めるだけなら `stop` を使います。
+
+```bash
+cd ~/ros2_ws/src/go2_ros2_sdk/docker
+docker compose stop
+```
+
+何が起こるか:
+- 起動中のコンテナを停止します。
+- コンテナ自体は削除されないので、次回 `docker compose start` で同じコンテナを再利用できます。
+- コンテナ内だけに存在している変更も、通常はこの時点では残ります。
+
+### 2.7 コンテナを削除して作り直す
+
+設定を変えたい場合や、コンテナを作り直したい場合だけ実行します。
+
+```bash
+cd ~/ros2_ws/src/go2_ros2_sdk/docker
+docker compose down
+```
+
+そのあと、必要なら再度次を行います。
+
+```bash
+ROBOT_IP=<ROBOT_IP> CONN_TYPE=<webrtc_or_cyclonedds> docker compose create
+docker compose start
+```
+
+何が起こるか:
+- Compose が管理しているコンテナを停止して削除します。
+- 次に `create` すると、新しいコンテナが作られます。
+- 以前のコンテナ内だけにあった変更は失われます。
+- イメージ自体は通常そのまま残るため、再度 `build` しなくても `create` は可能です。
+
+### 2.8 一発でビルドして起動したい場合
+
+初回確認や使い捨て運用なら、従来通り次でも構いません。
+
+```bash
+cd ~/ros2_ws/src/go2_ros2_sdk/docker
+ROBOT_IP=<ROBOT_IP> CONN_TYPE=<webrtc_or_cyclonedds> docker compose up --build
+```
+
+ただし、この方法は日常的な再起動手順としてはやや重く、コンテナ再作成が入るとコンテナ内の変更が消える可能性があります。
+
+何が起こるか:
+- 必要に応じてイメージのビルドを行います。
+- その後、コンテナを作成または再作成して起動します。
+- 起動時に `ros2 launch go2_robot_sdk robot.launch.py` も自動で実行されます。
+- 初回確認には便利ですが、普段の運用では `build`、`create`、`start` を分けた方が挙動を把握しやすいです。
+
+### 2.9 GUI を使う場合の補足
 
 `docker/docker-compose.yml` では X11 の socket と `.Xauthority` をマウントしているため、`rviz2` などの GUI をホストに表示したい場合はホスト側の X11 設定が必要です。
 
