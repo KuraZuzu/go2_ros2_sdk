@@ -126,7 +126,7 @@ ROBOT_IP=<ROBOT_IP> CONN_TYPE=<webrtc_or_cyclonedds> docker compose create
 
 ```bash
 cd ~/ros2_ws/src/go2_ros2_sdk/docker
-ROBOT_IP=192.168.5.113 CONN_TYPE=webrtc docker compose create
+ROBOT_IP=192.168.5.147 CONN_TYPE=webrtc docker compose create
 ```
 
 - `docker-compose.yml` に基づいてコンテナを作成します。
@@ -166,6 +166,67 @@ docker compose exec unitree_ros bash
 - 起動中の `unitree_ros` コンテナの中で、追加の `bash` プロセスを開きます。
 - すでに動いている `ros2 launch ...` はそのまま継続します。
 - 別ターミナルから `ros2 topic pub`、`ros2 topic echo`、`ros2 node list` などを実行できるようになります。
+
+### 2.5.1 起動後に別端末からロボットへコマンドを送る
+
+まず、別端末でコンテナに入ります。
+
+```bash
+cd ~/ros2_ws/src/go2_ros2_sdk/docker
+docker compose exec unitree_ros bash
+source /opt/ros/humble/setup.bash
+source /ros2_ws/install/setup.bash
+```
+
+このリポジトリでは、歩行の速度指令は `geometry_msgs/msg/Twist` を `cmd_vel` 系 topic に publish する構成です。
+
+- `twist_mux` が `/cmd_vel` を受け取る
+- 内部で `/cmd_vel_out` に流す
+- `go2_driver_node` が `/cmd_vel_out` を subscribe して WebRTC の移動コマンドへ変換する
+
+そのため、基本的な「WALK」は専用の別コマンドというより、立ち上がり後に `/cmd_vel` を送る運用で問題ありません。
+
+#### 立ち上がる
+
+```bash
+ros2 topic pub /webrtc_req go2_interfaces/msg/WebRtcReq "{id: 0, topic: 'rt/api/sport/request', api_id: 1004, parameter: '1004', priority: 1}" --once
+```
+
+#### 立位を安定させる
+
+```bash
+ros2 topic pub /webrtc_req go2_interfaces/msg/WebRtcReq "{id: 0, topic: 'rt/api/sport/request', api_id: 1002, parameter: '1002', priority: 1}" --once
+```
+
+#### 歩行可能状態で前進速度 1.0 m/s を与える
+
+このコマンドは publish を継続します。停止したいときは `Ctrl-C` で止めてください。
+
+```bash
+ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 1.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+```
+
+補足:
+- `x=1.0` が前進速度です。
+- `y=0.0`、`angular.z=0.0` なので横移動と旋回のない直進です。
+- `twist_mux` に timeout があるため、歩行中は継続 publish が必要です。
+
+#### 停止する
+
+```bash
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" --once
+```
+
+#### 脱力する (`Damp`)
+
+```bash
+ros2 topic pub /webrtc_req go2_interfaces/msg/WebRtcReq "{id: 0, topic: 'rt/api/sport/request', api_id: 1001, parameter: '1001', priority: 1}" --once
+```
+
+注意:
+- 初回は必ず周囲を広く空け、手で停止できる位置で試してください。
+- `go2_driver_node` が正常に起動していない場合は、`/webrtc_req` に subscriber が現れずコマンドは届きません。
+- もし `/cmd_vel` で反応しない場合は、`ros2 topic echo /cmd_vel_out` で `twist_mux` を通っているか確認してください。
 
 ### 2.6 コンテナを停止する
 
