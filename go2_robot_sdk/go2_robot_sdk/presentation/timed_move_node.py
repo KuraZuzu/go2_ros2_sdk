@@ -1,72 +1,52 @@
 # Copyright (c) 2024, RoboVerse community
 # SPDX-License-Identifier: BSD-3-Clause
 
-import math
 from typing import Optional
 
 import rclpy
 from geometry_msgs.msg import Twist
-from go2_interfaces.msg import Go2State
 from rclpy.node import Node
 
 
-class DistanceMoveNode(Node):
-    """Open-loop distance move helper using /go2_states velocity integration."""
+class TimedMoveNode(Node):
+    """Publish cmd_vel for a fixed duration, then publish stop commands."""
 
     def __init__(self) -> None:
-        super().__init__('distance_move_node')
+        super().__init__('timed_move_node')
 
         self.declare_parameter('speed', 0.0)
         self.declare_parameter('angular_speed', 0.0)
-        self.declare_parameter('distance', 0.0)
+        self.declare_parameter('duration', 0.0)
         self.declare_parameter('publish_rate', 10.0)
 
         self.speed = float(self.get_parameter('speed').value)
         self.angular_speed = float(self.get_parameter('angular_speed').value)
-        self.target_distance = float(self.get_parameter('distance').value)
+        self.duration = float(self.get_parameter('duration').value)
         self.publish_rate = float(self.get_parameter('publish_rate').value)
 
         if self.publish_rate <= 0.0:
             raise ValueError('publish_rate must be greater than 0')
-        if self.target_distance < 0.0:
-            raise ValueError('distance must be >= 0')
+        if self.duration < 0.0:
+            raise ValueError('duration must be >= 0')
 
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        self.state_sub = self.create_subscription(
-            Go2State, '/go2_states', self._on_go2_state, 10
-        )
-
-        self.last_velocity_time: Optional[float] = None
-        self.current_speed_mps = 0.0
-        self.integrated_distance_m = 0.0
-        self.stop_publish_count = 0
+        self.start_time: Optional[float] = None
         self.motion_complete = False
+        self.stop_publish_count = 0
 
         self.timer = self.create_timer(1.0 / self.publish_rate, self._on_timer)
 
         self.get_logger().info(
-            'distance_move_node started with '
+            'timed_move_node started with '
             f'speed={self.speed:.3f} m/s, '
             f'angular_speed={self.angular_speed:.3f} rad/s, '
-            f'distance={self.target_distance:.3f} m'
+            f'duration={self.duration:.3f} s'
         )
 
-        if self.target_distance == 0.0:
+        if self.duration == 0.0:
             self.get_logger().info(
-                'distance is 0.0 m, node will only publish stop commands.'
+                'duration is 0.0 s, node will only publish stop commands.'
             )
-
-    def _on_go2_state(self, msg: Go2State) -> None:
-        now = self.get_clock().now().nanoseconds / 1e9
-
-        if self.last_velocity_time is not None and not self.motion_complete:
-            dt = max(0.0, now - self.last_velocity_time)
-            self.integrated_distance_m += self.current_speed_mps * dt
-
-        vx = float(msg.velocity[0]) if len(msg.velocity) > 0 else 0.0
-        vy = float(msg.velocity[1]) if len(msg.velocity) > 1 else 0.0
-        self.current_speed_mps = math.hypot(vx, vy)
-        self.last_velocity_time = now
 
     def _build_twist(self, linear_x: float, angular_z: float) -> Twist:
         msg = Twist()
@@ -79,11 +59,17 @@ class DistanceMoveNode(Node):
         return msg
 
     def _on_timer(self) -> None:
-        if not self.motion_complete and self.integrated_distance_m >= self.target_distance:
+        now = self.get_clock().now().nanoseconds / 1e9
+
+        if self.start_time is None:
+            self.start_time = now
+
+        elapsed = now - self.start_time
+
+        if not self.motion_complete and elapsed >= self.duration:
             self.motion_complete = True
             self.get_logger().info(
-                'Target distance reached. '
-                f'integrated_distance={self.integrated_distance_m:.3f} m'
+                f'Target duration reached. elapsed={elapsed:.3f} s'
             )
 
         if self.motion_complete:
@@ -108,7 +94,7 @@ def main(args=None) -> None:
     rclpy.init(args=args)
     node = None
     try:
-        node = DistanceMoveNode()
+        node = TimedMoveNode()
         rclpy.spin(node)
     except (KeyboardInterrupt, SystemExit):
         pass
