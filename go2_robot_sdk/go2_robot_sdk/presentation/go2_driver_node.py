@@ -1,6 +1,3 @@
-# Copyright (c) 2024, RoboVerse community
-# SPDX-License-Identifier: BSD-3-Clause
-
 import asyncio
 import logging
 import os
