@@ -217,6 +217,39 @@ ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 1.0, y: 0.0,
 ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" --once
 ```
 
+#### 指定速度・指定角速度・指定距離だけ自動で移動する
+
+このリポジトリには、`/go2_states.velocity` を積分して距離を見積もり、指定距離に達したら自動停止する `distance_move_node` を追加しています。
+
+使い方:
+
+```bash
+ros2 run go2_robot_sdk distance_move_node --ros-args -p speed:=0.3 -p angular_speed:=0.0 -p distance:=1.0
+```
+
+引数:
+- `speed`: 前進速度 `linear.x` に与える値 `[m/s]`
+- `angular_speed`: 旋回速度 `angular.z` に与える値 `[rad/s]`
+- `distance`: `/go2_states.velocity` を使って積分する移動距離 `[m]`
+
+例:
+- 直進で 1.0 m 進む
+
+```bash
+ros2 run go2_robot_sdk distance_move_node --ros-args -p speed:=0.3 -p angular_speed:=0.0 -p distance:=1.0
+```
+
+- 前進しながらゆっくり左旋回して 2.0 m 分移動する
+
+```bash
+ros2 run go2_robot_sdk distance_move_node --ros-args -p speed:=0.2 -p angular_speed:=0.3 -p distance:=2.0
+```
+
+補足:
+- このノードはオープンループで、`/go2_states.velocity` の実速度を積分して大まかに距離を見積もります。
+- 厳密な位置制御は行いません。
+- 実行前にロボットを立ち上げ、歩行可能な状態にしておいてください。
+
 #### 脱力する (`Damp`)
 
 ```bash

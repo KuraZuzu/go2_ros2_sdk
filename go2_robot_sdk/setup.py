@@ -37,6 +37,7 @@ setup(
     entry_points={
         'console_scripts': [
             'go2_driver_node = go2_robot_sdk.main:main',
+            'distance_move_node = go2_robot_sdk.presentation.distance_move_node:main',
         ],
     },
 )
