@@ -291,6 +291,13 @@ ROBOT_IP=<ROBOT_IP> CONN_TYPE=<webrtc_or_cyclonedds> docker compose create
 docker compose start
 ```
 
+videoなしで立ち上げる（映像取得できない場合はこちらで実行）
+
+```bash
+ros2 run go2_robot_sdk go2_driver_node --ros-args -p robot_ip:=192.168.5.147 -p conn_type:=webrtc -p enable_video:=false
+```
+
+
 何が起こるか:
 - Compose が管理しているコンテナを停止して削除します。
 - 次に `create` すると、新しいコンテナが作られます。
